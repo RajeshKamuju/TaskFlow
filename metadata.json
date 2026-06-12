@@ -1,0 +1,6 @@
+{
+  "name": "Task Management System",
+  "description": "Full-stack Java Spring Boot & React Task Management System with JWT authentication and CRUD operations, designed for learning and interviews.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
