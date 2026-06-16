@@ -1,16 +1,49 @@
 import axios from 'axios';
 
-// We create an axios instance with a default base URL.
+// Get current backend mode (persisted in localStorage)
+export const getBackendMode = () => {
+  const saved = localStorage.getItem('backend_mode');
+  if (saved) return saved;
+  // If we are running on localhost, default to Spring Boot live connection
+  if (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1') {
+    return 'springboot';
+  }
+  // Otherwise, default to Sandbox simulator so the app works instantly in the AI Studio preview
+  return 'sandbox';
+};
+
+// Toggle the backend mode and reload the application
+export const toggleBackendMode = () => {
+  const current = getBackendMode();
+  const next = current === 'springboot' ? 'sandbox' : 'springboot';
+  localStorage.setItem('backend_mode', next);
+  // Clear any existing session to prevent contamination
+  localStorage.removeItem('token');
+  localStorage.removeItem('userName');
+  localStorage.removeItem('userEmail');
+  window.location.reload();
+};
+
+// We define our baseURL dynamically.
+const getBaseURL = () => {
+  const mode = getBackendMode();
+  if (mode === 'springboot') {
+    return 'http://localhost:8080/api';
+  }
+  return '/api';
+};
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL: getBaseURL(),
   headers: {
     'Content-Type': 'application/json',
   },
 });
 
-// INTERCEPTOR: Automatically attach JWT token to headers if present
+// INTERCEPTOR: Update baseURL dynamically and attach JWT token to headers if present
 api.interceptors.request.use(
   (config) => {
+    config.baseURL = getBaseURL();
     const token = localStorage.getItem('token');
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
@@ -23,10 +56,6 @@ api.interceptors.request.use(
 // ===================================================================
 // OFFLINE DEVELOPER PLAYGROUND: SIMULATION DATA ENGINE
 // ===================================================================
-// Since our Java Spring Boot backend is meant to be run on your local machine,
-// we intercept outgoing REST routes and simulate them cleanly using localStorage,
-// so that your live applet preview compiles and works fully in your browser!
-
 // Initialize mock storage if empty
 const initializeMockDb = () => {
   if (!localStorage.getItem('mock_users')) {
@@ -52,13 +81,26 @@ const getRequestPayload = (data) => {
 
 api.interceptors.request.use(
   (config) => {
-    // Override adapter to simulate backend in sandbox browser preview
+    // Only intercept and mock if backend_mode is set to 'sandbox'
+    const isMock = getBackendMode() === 'sandbox';
+    if (!isMock) {
+      return config;
+    }
+
     config.adapter = async (adapterConfig) => {
       initializeMockDb();
-      const url = adapterConfig.url || '';
+      
+      // Determine request URL details
+      let url = adapterConfig.url || '';
+      // If URL has the baseURL prepended, isolate the relative portion
+      if (url.startsWith('http://') || url.startsWith('https://')) {
+        const parts = url.split('/api');
+        url = parts.length > 1 ? '/api' + parts[1] : url;
+      }
+      const relativeUrl = url.replace(/^\/api/, '');
       const method = (adapterConfig.method || 'get').toLowerCase();
 
-      // Helper to extract the token from headers mapping
+      // Helper to extract email from Bearer token
       const getAuthenticatedUserEmail = () => {
         let authHeader = adapterConfig.headers?.Authorization || adapterConfig.headers?.get?.('Authorization');
         if (!authHeader && adapterConfig.headers) {
@@ -68,14 +110,11 @@ api.interceptors.request.use(
           return null;
         }
         const token = authHeader.substring(7);
-        // Decrypt our virtual JWT token (it stores the email address in plain form)
         return token.split('_jwt_')[0];
       };
 
-      // ---------------------------------------------------------------
       // 1. AUTHENTICATION REQ SIMULATIONS
-      // ---------------------------------------------------------------
-      if (url.includes('/auth/register') && method === 'post') {
+      if (relativeUrl.includes('/auth/register') && method === 'post') {
         const payload = getRequestPayload(adapterConfig.data);
         const { name, email, password } = payload;
         if (!name || !email || !password) {
@@ -95,7 +134,6 @@ api.interceptors.request.use(
         users.push(newUser);
         localStorage.setItem('mock_users', JSON.stringify(users));
 
-        // Generate virtual token
         const mockToken = `${email}_jwt_${Date.now()}`;
         return {
           data: { token: mockToken, name, email },
@@ -106,7 +144,7 @@ api.interceptors.request.use(
         };
       }
 
-      if (url.includes('/auth/login') && method === 'post') {
+      if (relativeUrl.includes('/auth/login') && method === 'post') {
         const payload = getRequestPayload(adapterConfig.data);
         const { email, password } = payload;
         const users = JSON.parse(localStorage.getItem('mock_users') || '[]');
@@ -128,10 +166,8 @@ api.interceptors.request.use(
         };
       }
 
-      // ---------------------------------------------------------------
       // 2. SECURE TASKS LIST CRUD SIMULATIONS
-      // ---------------------------------------------------------------
-      if (url === '/tasks' || url.startsWith('/tasks/')) {
+      if (relativeUrl === '/tasks' || relativeUrl.startsWith('/tasks/')) {
         const currentUserEmail = getAuthenticatedUserEmail();
         if (!currentUserEmail) {
           return Promise.reject({
@@ -141,8 +177,7 @@ api.interceptors.request.use(
 
         const tasks = JSON.parse(localStorage.getItem('mock_tasks') || '[]');
 
-        // GET /api/tasks (Retrieves tasks belonging to the current user)
-        if (url === '/tasks' && method === 'get') {
+        if (relativeUrl === '/tasks' && method === 'get') {
           const userTasks = tasks.filter((t) => t.userEmail === currentUserEmail);
           return {
             data: userTasks,
@@ -153,8 +188,7 @@ api.interceptors.request.use(
           };
         }
 
-        // POST /api/tasks (Creates new task linked to current user)
-        if (url === '/tasks' && method === 'post') {
+        if (relativeUrl === '/tasks' && method === 'post') {
           const data = getRequestPayload(adapterConfig.data);
           const newTask = {
             id: Date.now(),
@@ -177,9 +211,8 @@ api.interceptors.request.use(
           };
         }
 
-        // PUT /api/tasks/{id} (Updates selected task verifying owner clearance)
-        if (url.startsWith('/tasks/') && method === 'put') {
-          const id = parseInt(url.split('/tasks/')[1]);
+        if (relativeUrl.startsWith('/tasks/') && method === 'put') {
+          const id = parseInt(relativeUrl.split('/tasks/')[1]);
           const data = getRequestPayload(adapterConfig.data);
 
           const taskIndex = tasks.findIndex((t) => t.id === id && t.userEmail === currentUserEmail);
@@ -209,9 +242,8 @@ api.interceptors.request.use(
           };
         }
 
-        // DELETE /api/tasks/{id} (Deletes task verifying ownership)
-        if (url.startsWith('/tasks/') && method === 'delete') {
-          const id = parseInt(url.split('/tasks/')[1]);
+        if (relativeUrl.startsWith('/tasks/') && method === 'delete') {
+          const id = parseInt(relativeUrl.split('/tasks/')[1]);
           const taskIndex = tasks.findIndex((t) => t.id === id && t.userEmail === currentUserEmail);
           
           if (taskIndex === -1) {
@@ -234,7 +266,7 @@ api.interceptors.request.use(
       }
 
       return Promise.reject({
-        response: { status: 404, data: { message: 'API simulator path not matched' } }
+        response: { status: 404, data: { message: `API simulator path not matched for ${relativeUrl}` } }
       });
     };
 

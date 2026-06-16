@@ -1,5 +1,6 @@
 import React from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { getBackendMode, toggleBackendMode } from '../services/api';
 
 /**
  * Navbar component for general page headers.
@@ -9,6 +10,7 @@ export default function Navbar() {
   const navigate = useNavigate();
   const token = localStorage.getItem('token');
   const userName = localStorage.getItem('userName') || 'User';
+  const backendMode = getBackendMode();
 
   const handleLogout = () => {
     // 1. Wipe out any persistent tokens and session variables
@@ -44,6 +46,23 @@ export default function Navbar() {
 
         {/* Dynamic menu items depending on current authentication state */}
         <div className="collapse navbar-collapse" id="taskNavbarContent">
+          {/* Backend Connection Indicator Dashboard */}
+          <div className="d-flex align-items-center me-auto ms-lg-3 my-2 my-lg-0">
+            <span className="navbar-text text-muted me-2 text-sm d-none d-lg-inline">Connection:</span>
+            <button 
+              onClick={toggleBackendMode} 
+              className={`btn btn-sm py-1 px-3 rounded-pill text-xs fw-semibold ${
+                backendMode === 'springboot' 
+                  ? 'btn-success text-white' 
+                  : 'btn-outline-info text-info'
+              }`}
+              title="Click to toggle between Mock and Live Spring Boot server"
+              style={{ fontSize: '0.75rem' }}
+            >
+              {backendMode === 'springboot' ? '⚡ Spring Boot API (Port 8080)' : '🟢 Sandbox Database'}
+            </button>
+          </div>
+
           <ul className="navbar-nav ms-auto mb-2 mb-lg-0 align-items-center">
             {token ? (
               <>
@@ -78,3 +97,4 @@ export default function Navbar() {
     </nav>
   );
 }
+
